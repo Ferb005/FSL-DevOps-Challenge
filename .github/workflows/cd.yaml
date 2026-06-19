@@ -1,0 +1,66 @@
+name: CD Pipeline
+
+on: 
+  push:
+    branches:
+      - devel
+      - stage
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+            node-version: '15'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build project
+        run: npm run build
+
+      - name: Deploy to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Terraform init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform plan
+        working-directory: terraform
+        run: terraform plan
+
+      - name: Terraform apply
+        working-directory: terraform
+        run: terraform apply
+
+      - name: Get Terraform output
+        id: tf
+        working-directory: terraform
+        run: |
+          echo "storage_account_name=$(terraform output -raw storage_account_name)" >> $GITHUB_OUTPUT
+          echo "rg=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+
+      - name: Upload to Azure Blob Storage
+        uses: azure/cli@v2
+        with:
+            azcliversion: latest
+            inlineScript: |
+              az storage blob upload-batch \
+              --account-name ${{ steps.tf.outputs.storage_account_name }} \
+              --destination '$web' \
+              --source ./build \
+              --overwrite
+              --auth-mode login
