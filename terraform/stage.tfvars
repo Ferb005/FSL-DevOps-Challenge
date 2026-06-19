@@ -1,0 +1,2 @@
+environment = "stage"
+location = "eastus"
