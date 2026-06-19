@@ -18,5 +18,3 @@ function App() {
 }
 
 export default App;
-
-const unusedvariable = "This is an unused variable";
