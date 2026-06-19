@@ -37,82 +37,33 @@ jobs:
       - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+            creds: ${{ secrets.AZURE_CREDENTIALS }}
+        
+      - name: Set up terraform
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
-      - name: Restore Terraform state
-        uses: actions/cache/restore@v4
-        id: tfstate-cache
-        with:
-          path: terraform/terraform.tfstate
-          key: tfstate-${{ github.ref_name }}-v1
-
-      - name: Initialize Terraform
+      - name: Initialize terraform
         working-directory: terraform
         run: terraform init
 
-      - name: Import existing resources
-        if: steps.tfstate-cache.outputs.cache-hit != 'true'
+      - name: Apply terraform
         working-directory: terraform
-        continue-on-error: true
-        env:
-          ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
-          ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
-          ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
-          ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
-        run: |
-          ENV="${{ github.ref_name }}"
-          SUB="${ARM_SUBSCRIPTION_ID}"
-          RG_NAME="rg-rdicidr-${ENV}"
-          SA_NAME="rdicidr${ENV}"
-          LAW_NAME="law-rdicidr-${ENV}"
-
-          terraform import -var-file="${ENV}.tfvars" azurerm_resource_group.main \
-            "/subscriptions/${SUB}/resourceGroups/${RG_NAME}" || true
-          terraform import -var-file="${ENV}.tfvars" azurerm_storage_account.web \
-            "/subscriptions/${SUB}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${SA_NAME}" || true
-          terraform import -var-file="${ENV}.tfvars" azurerm_log_analytics_workspace.main \
-            "/subscriptions/${SUB}/resourceGroups/${RG_NAME}/providers/Microsoft.OperationalInsights/workspaces/${LAW_NAME}" || true
-
-      - name: Apply Terraform
-        working-directory: terraform
-        env:
-          ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
-          ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
-          ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
-          ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
-        run: terraform apply -auto-approve -var-file="${{ github.ref_name }}.tfvars"
-
-      - name: Get Terraform outputs
-        id: tf
+        run: terraform apply
+        
+      - name: Get terraform outputs
         working-directory: terraform
         run: |
-          echo "storage_account_name=$(terraform output -raw storage_account_name)" >> "$GITHUB_OUTPUT"
-          echo "resource_group_name=$(terraform output -raw resource_group_name)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload to Azure Storage
-        run: |
-          ACCOUNT_NAME="${{ steps.tf.outputs.storage_account_name }}"
-          RESOURCE_GROUP="${{ steps.tf.outputs.resource_group_name }}"
-          ACCOUNT_KEY=$(az storage account keys list \
-            --account-name "$ACCOUNT_NAME" \
-            --resource-group "$RESOURCE_GROUP" \
-            --query '[0].value' -o tsv)
-          az storage blob upload-batch \
-            --source ./build \
-            --destination '$web' \
-            --overwrite \
-            --account-name "$ACCOUNT_NAME" \
-            --auth-mode key \
-            --account-key "$ACCOUNT_KEY"
-
-      - name: Save Terraform state
-        if: always()
-        uses: actions/cache/save@v4
+         echo "storage_account_name=$(terraform output -raw storage_account_name)" >> $GITHUB_OUTPUT
+         echo "rg=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+        
+      - name: Upload to azure storage
+        uses: azure/cli@v4
         with:
-          path: terraform/terraform.tfstate
-          key: tfstate-${{ github.ref_name }}-v1
+          azcliversion: latest |
+            az storage blob upload-batch \
+              --source ./build \
+              --destination '$web' \
+              --overwrite \
+              --account-name ${{ steps.tf.outputs.storage_account_name }} \

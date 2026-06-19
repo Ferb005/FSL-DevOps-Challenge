@@ -21,23 +21,3 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-
-# terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfstate.backup
-.terraform.tfstate.lock.info
-crash.log
-crash.*.log
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
-.terraformrc
-terraform.rc
-
-# azure / local secrets
-.env
-.env.*
-!.env.example
