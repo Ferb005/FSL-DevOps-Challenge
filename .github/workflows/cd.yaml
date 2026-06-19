@@ -95,16 +95,20 @@ jobs:
           echo "resource_group_name=$(terraform output -raw resource_group_name)" >> "$GITHUB_OUTPUT"
 
       - name: Upload to Azure Storage
-        uses: azure/cli@v2
-        with:
-          azcliversion: latest
-          inlineScript: |
-            az storage blob upload-batch \
-              --source ./build \
-              --destination '$web' \
-              --overwrite \
-              --account-name "${{ steps.tf.outputs.storage_account_name }}" \
-              --auth-mode login
+        run: |
+          ACCOUNT_NAME="${{ steps.tf.outputs.storage_account_name }}"
+          RESOURCE_GROUP="${{ steps.tf.outputs.resource_group_name }}"
+          ACCOUNT_KEY=$(az storage account keys list \
+            --account-name "$ACCOUNT_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query '[0].value' -o tsv)
+          az storage blob upload-batch \
+            --source ./build \
+            --destination '$web' \
+            --overwrite \
+            --account-name "$ACCOUNT_NAME" \
+            --auth-mode key \
+            --account-key "$ACCOUNT_KEY"
 
       - name: Save Terraform state
         if: always()
