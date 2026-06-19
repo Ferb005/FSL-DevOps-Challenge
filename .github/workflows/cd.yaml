@@ -44,9 +44,39 @@ jobs:
         with:
           terraform_wrapper: false
 
+      - name: Restore Terraform state
+        uses: actions/cache/restore@v4
+        id: tfstate-cache
+        with:
+          path: terraform/terraform.tfstate
+          key: tfstate-${{ github.ref_name }}-v1
+
       - name: Initialize Terraform
         working-directory: terraform
         run: terraform init
+
+      - name: Import existing resources
+        if: steps.tfstate-cache.outputs.cache-hit != 'true'
+        working-directory: terraform
+        continue-on-error: true
+        env:
+          ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
+          ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
+          ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+          ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
+        run: |
+          ENV="${{ github.ref_name }}"
+          SUB="${ARM_SUBSCRIPTION_ID}"
+          RG_NAME="rg-rdicidr-${ENV}"
+          SA_NAME="rdicidr${ENV}"
+          LAW_NAME="law-rdicidr-${ENV}"
+
+          terraform import -var-file="${ENV}.tfvars" azurerm_resource_group.main \
+            "/subscriptions/${SUB}/resourceGroups/${RG_NAME}" || true
+          terraform import -var-file="${ENV}.tfvars" azurerm_storage_account.web \
+            "/subscriptions/${SUB}/resourceGroups/${RG_NAME}/providers/Microsoft.Storage/storageAccounts/${SA_NAME}" || true
+          terraform import -var-file="${ENV}.tfvars" azurerm_log_analytics_workspace.main \
+            "/subscriptions/${SUB}/resourceGroups/${RG_NAME}/providers/Microsoft.OperationalInsights/workspaces/${LAW_NAME}" || true
 
       - name: Apply Terraform
         working-directory: terraform
@@ -75,3 +105,10 @@ jobs:
               --overwrite \
               --account-name "${{ steps.tf.outputs.storage_account_name }}" \
               --auth-mode login
+
+      - name: Save Terraform state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: terraform/terraform.tfstate
+          key: tfstate-${{ github.ref_name }}-v1
