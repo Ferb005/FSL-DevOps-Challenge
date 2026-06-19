@@ -1,0 +1,2 @@
+environment = "devel"
+location = "eastus"
