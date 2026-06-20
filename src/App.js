@@ -18,5 +18,3 @@ function App() {
 }
 
 export default App;
-
-const unusedvariable = "Test for CI/CD Unused Variable";
