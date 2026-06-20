@@ -73,7 +73,7 @@ jobs:
           az storage container create \
             --name tfstate \
             --account-name "$STORAGE_ACCOUNT" \
-            --auth-mode login || true
+            --auth-mode key || true
 
       - name: Terraform Init
         working-directory: terraform
@@ -106,7 +106,7 @@ jobs:
         run: |
           az storage blob upload-batch \
             --account-name "${{ steps.tf-outputs.outputs.storage_account }}" \
-            --auth-mode login \
+            --auth-mode key \
             --destination '$web' \
             --source build \
             --overwrite
