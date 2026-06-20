@@ -1,0 +1,116 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches:
+      - devel
+      - stage
+  workflow_dispatch:
+
+concurrency:
+  group: cd-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '15'
+          cache: 'npm'
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        id: node-modules-cache
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+
+      - name: Install dependencies
+        if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm install
+
+      - name: Build project
+        run: npm run build
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        id: terraform-cache
+        with:
+          path: terraform/.terraform
+          key: ${{ runner.os }}-terraform-${{ hashFiles('terraform/.terraform.lock.hcl') }}
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        env:
+          ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
+          ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
+          ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+          ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: terraform
+        env:
+          ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
+          ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
+          ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+          ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
+        run: terraform apply -auto-approve -var-file="${{ github.ref_name }}.tfvars"
+
+      - name: Get Terraform outputs
+        id: tf-outputs
+        working-directory: terraform
+        run: |
+          echo "storage_account=$(terraform output -raw storage_account_name)" >> "$GITHUB_OUTPUT"
+          echo "resource_group=$(terraform output -raw resource_group_name)" >> "$GITHUB_OUTPUT"
+          echo "cdn_url=$(terraform output -raw cdn_endpoint_url)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy static site to Azure Storage
+        run: |
+          az storage blob upload-batch \
+            --account-name "${{ steps.tf-outputs.outputs.storage_account }}" \
+            --auth-mode login \
+            --destination '$web' \
+            --source build \
+            --overwrite
+
+      - name: Purge CDN cache
+        run: |
+          CDN_PROFILE=$(az cdn profile list \
+            --resource-group "${{ steps.tf-outputs.outputs.resource_group }}" \
+            --query "[0].name" -o tsv)
+          CDN_ENDPOINT=$(az cdn endpoint list \
+            --profile-name "$CDN_PROFILE" \
+            --resource-group "${{ steps.tf-outputs.outputs.resource_group }}" \
+            --query "[0].name" -o tsv)
+
+          az cdn endpoint purge \
+            --resource-group "${{ steps.tf-outputs.outputs.resource_group }}" \
+            --profile-name "$CDN_PROFILE" \
+            --name "$CDN_ENDPOINT" \
+            --content-paths "/*"
+
+      - name: Deployment summary
+        run: |
+          echo "Environment: ${{ github.ref_name }}"
+          echo "Storage account: ${{ steps.tf-outputs.outputs.storage_account }}"
+          echo "CDN URL: ${{ steps.tf-outputs.outputs.cdn_url }}"
